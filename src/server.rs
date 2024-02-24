@@ -4,26 +4,34 @@
 use log::info;
 use std::io;
 
+use crate::engine;
+
 pub fn run(engine_type: String) -> Result<(), ()> {
     info!("Starting Dumb DB Server.");
     info!("Listening on port NONE.");
     println!("Welcome to DumbDB!");
+
+    let db_engine = engine::create_engine_from_string(engine_type)
+        .expect("Engine type does not match any implementations");
+    // Main loop
+    // Eventually this will be a proper connection-handler
     loop {
+        // TODO(?): beef up parsing
         let mut input = String::new();
         io::stdin()
             .read_line(&mut input)
             .expect("Expected input but got none");
 
         let inp_tokens: Vec<&str> = input.trim().split(" ").collect();
-        match inp_tokens.as_slice() {
-            ["get", key] => println!("getting val for {}", key),
-            ["put", key, val] => println!("putting val {} for {}", val, key),
+        let _ = match inp_tokens.as_slice() {
+            ["get", key] => db_engine.read(String::from(*key)),
+            ["put", key, val] => db_engine.write(String::from(*key), String::from(*val)),
             ["quit"] | ["q"] => {
                 println!("Breaking from the program.");
                 break;
-            },
+            }
             _ => continue,
-        }
+        };
     }
 
     return Ok(());

@@ -1,5 +1,6 @@
 use clap::Parser;
 
+pub mod engine;
 pub mod server;
 
 #[derive(Parser, Debug)]
