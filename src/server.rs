@@ -11,6 +11,7 @@ pub fn run(engine_type: String) -> Result<(), ()> {
     info!("Listening on port NONE.");
     println!("Welcome to DumbDB!");
 
+    // TODO: maybe turn this to compiler flags if Rust supports that?
     let db_engine = engine::create_engine_from_string(engine_type)
         .expect("Engine type does not match any implementations");
     // Main loop
@@ -24,10 +25,19 @@ pub fn run(engine_type: String) -> Result<(), ()> {
 
         let inp_tokens: Vec<&str> = input.trim().split(" ").collect();
         let _ = match inp_tokens.as_slice() {
-            ["get", key] => db_engine.read(String::from(*key)),
-            ["put", key, val] => db_engine.write(String::from(*key), String::from(*val)),
+            ["get", key] => {
+                match db_engine.read(String::from(*key)) {
+                    Ok(Some(val)) => println!("{}", val),
+                    Ok(None) => println!("Did not find key"),
+                    Err(()) => println!("There was an error when trying to read the DB"),
+                };
+            }
+            ["put", key, val] => {
+                db_engine.db_write(String::from(*key), String::from(*val));
+            }
             ["quit"] | ["q"] => {
                 println!("Breaking from the program.");
+                let _ = db_engine.shutdown(); // gracefully shutdown (e.g write index, wrap up threads, etc.)
                 break;
             }
             _ => continue,
