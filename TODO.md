@@ -1,10 +1,12 @@
 # Features
+- [] Implement SSTables/LSM-Tree engine
 - [] Better encoding for db data files (binary/byte encoded instead of text CSV)
 - [] Reconstruct Hash Index for `NaiveWithHashIndexEngine` on database startup
 - [] Add Server support (application accepts connections over TCP)
 - [] Add support for usage of multiple data files for an engine
 - [] Add signal handling/crash detection
 - [] Add threading to separate read/write/compaction operations
+- [] Implement B-tree engine
 - [] (Long term) add distribution
 
 # Code Quality/Refactoring
