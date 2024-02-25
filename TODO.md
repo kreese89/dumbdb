@@ -7,7 +7,9 @@
 - [] Add signal handling/crash detection
 - [] Add threading to separate read/write/compaction operations
 - [] Implement B-tree engine
-- [] (Long term) add distribution
+- [] (Long term) add distribution (maybe in different repo)
+- [] (Long term) Add column support (maybe in different repo)
+- [] (Long term) Multi-indexes
 
 # Code Quality/Refactoring
 - [] Refactor some shared engine code to defaultly-implemented functions on `Engine`
