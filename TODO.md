@@ -13,6 +13,7 @@
 
 # Code Quality/Refactoring
 - [] Refactor some shared engine code to defaultly-implemented functions on `Engine`
+- [] Make code more idiomatic
 
 # Measurement and Testing
 - [] Add basic test suite for `Engine` implementations/structs
