@@ -7,6 +7,7 @@
 - [] Add signal handling/crash detection
 - [] Add threading to separate read/write/compaction operations
 - [] Implement B-tree engine
+- [] Improve command parsing to allow for spaces in vals (and eventually keys)
 - [] (Long term) add distribution (maybe in different repo)
 - [] (Long term) Add column support (maybe in different repo)
 - [] (Long term) Multi-indexes
