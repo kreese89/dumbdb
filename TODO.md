@@ -4,6 +4,9 @@
 - [] Reconstruct Hash Index for `NaiveWithHashIndexEngine` on database startup
 - [] Add Server support (application accepts connections over TCP)
 - [] Add support for usage of multiple data files for an engine
+    - [] `Naive`
+    - [] `NaiveWithHashIndex`
+    - [] Scan for files on startup to populate engine's list of files
 - [] Add signal handling/crash detection
 - [] Add threading to separate read/write/compaction operations
 - [] Implement B-tree engine

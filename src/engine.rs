@@ -8,6 +8,8 @@ use log::info;
 // Engine represents the storage engine for our dumb DB.
 // This is the thing that handles actual reads and writes to disk
 
+const MAX_LOG_FILE_SIZE: u64 = 24;
+
 enum EngineFileOrientation {
     Log,
     Page,
@@ -42,12 +44,17 @@ impl EngineConfig {
 
 pub struct NaiveEngine {
     config: EngineConfig,
+    files: Vec<String>,
 }
 
 impl Engine for NaiveEngine {
     fn db_read(&self, key: String) -> Result<Option<String>, ()> {
         // open directory/DB file, scan through the file in reverse order, search for key
-        let log_file_path = self.config.db_directory.clone() + "/db.log";
+
+        let db_dir = &self.config.db_directory;
+        let default_filename = format!("{db_dir}/db0.log");
+
+        let log_file_path = self.files.last().unwrap_or(&default_filename); // just fetch the most recent file
         let mut log_file_lines = String::new();
         let mut log_file = OpenOptions::new()
             .write(true) // needed to be able to create the file if it doesn't exist
@@ -88,7 +95,10 @@ impl Engine for NaiveEngine {
     fn db_write(&mut self, key: String, val: String) -> Result<Option<String>, ()> {
         // open directory/DB file (create if doesn't exist)
 
-        let log_file_path = self.config.db_directory.clone() + "/db.log";
+        // let log_file_path = self.config.db_directory.clone() + "/db.log";
+        let db_dir = &self.config.db_directory;
+        let default_filename = format!("{db_dir}/db0.log");
+        let log_file_path = self.files.last().unwrap_or(&default_filename); // just fetch the most recent file
 
         let mut log_file = OpenOptions::new()
             .create(true)
@@ -98,7 +108,21 @@ impl Engine for NaiveEngine {
 
         let new_entry = format!("{key},{val}\n");
 
-        let _ = log_file.write(new_entry.as_bytes());
+        let existing_file_size = log_file.metadata().unwrap().len();
+        if existing_file_size > MAX_LOG_FILE_SIZE {
+            let files_ct = self.files.len() + 1;
+            let new_filename = format!("{db_dir}/db{files_ct}.log");
+            let mut new_log_file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(new_filename.as_str())
+                .expect("Expected open and create new file");
+
+            self.files.push(new_filename);
+            let _ = new_log_file.write(new_entry.as_bytes());
+        } else {
+            let _ = log_file.write(new_entry.as_bytes());
+        }
 
         return Ok(None);
     }
@@ -115,7 +139,10 @@ impl NaiveEngine {
         let path = Path::new(config.db_directory.as_str());
         create_dir_all(path).expect("Unable to create data directory for dumbdb");
 
-        return NaiveEngine { config };
+        return NaiveEngine {
+            config,
+            files: Vec::new(),
+        };
     }
 }
 pub struct NaiveWithHashIndexEngine {
