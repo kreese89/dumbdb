@@ -147,7 +147,8 @@ impl NaiveEngine {
 }
 pub struct NaiveWithHashIndexEngine {
     config: EngineConfig,
-    index: HashMap<String, u64>, // stores the byte offset of keys in the underlying db file
+    index: Vec<HashMap<String, u64>>, // stores the byte offset of keys in the underlying db file
+    files: Vec<String>,
 }
 
 impl NaiveWithHashIndexEngine {
@@ -156,52 +157,65 @@ impl NaiveWithHashIndexEngine {
         // TODO: make this write to a proper directory at some point
         let path = Path::new(config.db_directory.as_str());
         create_dir_all(path).expect("Unable to create data directory for dumbdb");
-        let mut index = HashMap::new();
+        let mut index = Vec::new();
 
-        return NaiveWithHashIndexEngine { config, index };
+        // TODO: populate index on startup
+
+        return NaiveWithHashIndexEngine {
+            config,
+            index,
+            files: Vec::new(),
+        };
     }
 }
 
 impl Engine for NaiveWithHashIndexEngine {
     fn db_read(&self, key: String) -> Result<Option<String>, ()> {
-        match self.index.get(&key) {
-            Some(&byte_offset) => {
-                // TODO: refactor this stuff
-                let mut log_file_str_buf: String = String::new();
-                let log_file_path = self.config.db_directory.clone() + "/db.log";
-                let mut log_file = OpenOptions::new()
-                    .write(true) // needed to be able to create the file if it doesn't exist
-                    .create(true)
-                    .read(true)
-                    .open(Path::new(log_file_path.as_str()))
-                    .expect("Expected file open.");
+        // reverse since we push newer files/hashmaps to the end of the Vec
+        for ind in self.index.iter().rev() {
+            match ind.get(&key) {
+                Some(&byte_offset) => {
+                    let db_dir = &self.config.db_directory;
+                    let default_filename = format!("{db_dir}/db0.log");
+                    let log_file_path = self.files.last().unwrap_or(&default_filename); // just fetch the most recent file
 
-                log_file.seek(SeekFrom::Start(byte_offset));
-                log_file
-                    .read_to_string(&mut log_file_str_buf)
-                    .expect("To be able to read from file");
+                    // TODO: refactor this stuff
+                    let mut log_file_str_buf: String = String::new();
+                    let mut log_file = OpenOptions::new()
+                        .write(true) // needed to be able to create the file if it doesn't exist
+                        .create(true)
+                        .read(true)
+                        .open(Path::new(log_file_path.as_str()))
+                        .expect("Expected file open.");
 
-                let found_line = log_file_str_buf.lines().next().unwrap(); // TODO: actually match this
-                info!("Parsing line: {}", found_line);
-                let mut line_tokens = found_line.split(",");
+                    log_file.seek(SeekFrom::Start(byte_offset));
+                    log_file
+                        .read_to_string(&mut log_file_str_buf)
+                        .expect("To be able to read from file");
 
-                // if somehow the key doesn't match, raise an Error
-                if line_tokens.next().unwrap() != key.as_str() {
-                    return Err(());
+                    let found_line = log_file_str_buf.lines().next().unwrap(); // TODO: actually match this
+                    info!("Parsing line: {}", found_line);
+                    let mut line_tokens = found_line.split(",");
+
+                    // if somehow the key doesn't match, raise an Error
+                    if line_tokens.next().unwrap() != key.as_str() {
+                        return Err(());
+                    }
+                    let val = String::from(line_tokens.next().unwrap());
+                    return Ok(Some(val));
                 }
-                let val = String::from(line_tokens.next().unwrap());
-                return Ok(Some(val));
-            }
-            None => {
-                // TODO: if we encounter a hash miss, read the DB and try and find it
-                // (or maybe not. Let's think more about db state before that);
-                return Ok(None);
+                None => {
+                    continue; // just try the next index
+                }
             }
         }
+        return Ok(None);
     }
 
     fn db_write(&mut self, key: String, val: String) -> Result<Option<String>, ()> {
-        let log_file_path = self.config.db_directory.clone() + "/db.log";
+        let db_dir = &self.config.db_directory;
+        let default_filename = format!("{db_dir}/db0.log");
+        let log_file_path = self.files.last().unwrap_or(&default_filename); // just fetch the most recent file
         let mut log_file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -209,11 +223,39 @@ impl Engine for NaiveWithHashIndexEngine {
             .expect("Expected file to open.");
 
         let new_entry = format!("{key},{val}\n");
-        let existing_file_size = log_file.metadata().unwrap().len();
 
-        let _ = log_file.write(new_entry.as_bytes());
-        self.index.insert(key, existing_file_size);
-        println!("{:?}", self.index);
+        let existing_file_size = log_file.metadata().unwrap().len();
+        if existing_file_size > MAX_LOG_FILE_SIZE {
+            let files_ct = self.files.len() + 1;
+            let new_filename = format!("{db_dir}/db{files_ct}.log");
+            let mut new_log_file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(new_filename.as_str())
+                .expect("Expected open and create new file");
+
+            let new_file_size = new_log_file.metadata().unwrap().len();
+            self.files.push(new_filename);
+            let mut new_index = HashMap::new();
+
+            let _ = new_log_file.write(new_entry.as_bytes());
+            new_index.insert(key, new_file_size);
+            self.index.push(new_index);
+        } else {
+            let _ = log_file.write(new_entry.as_bytes());
+            match self.index.last_mut() {
+                // in case the index doesn't yet exist
+                Some(ind) => {
+                    ind.insert(key, existing_file_size);
+                }
+                None => {
+                    let mut ind = HashMap::new();
+                    ind.insert(key, existing_file_size);
+                    self.index.push(ind);
+                }
+            };
+        }
+
         return Ok(None);
     }
 
