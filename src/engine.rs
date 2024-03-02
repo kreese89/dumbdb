@@ -34,7 +34,7 @@ pub struct EngineConfig {
 impl EngineConfig {
     pub fn get_standard_config() -> EngineConfig {
         return EngineConfig {
-            db_directory: String::from("./dumbdb/data/"),
+            db_directory: String::from("./dumbdb/data"),
             orientation: EngineFileOrientation::Log,
             // files: None,
             file: None,
@@ -155,16 +155,55 @@ impl NaiveWithHashIndexEngine {
     pub fn new() -> NaiveWithHashIndexEngine {
         let config = EngineConfig::get_standard_config();
         // TODO: make this write to a proper directory at some point
-        let path = Path::new(config.db_directory.as_str());
+        let db_dir = config.db_directory.clone();
+        let path = Path::new(db_dir.as_str());
         create_dir_all(path).expect("Unable to create data directory for dumbdb");
-        let mut index = Vec::new();
 
-        // TODO: populate index on startup
+        let mut index = Vec::new();
+        let mut files = Vec::new();
+
+        let mut ctr = 0;
+        let mut db_file_filename = format!("{db_dir}/db{ctr}.log");
+
+        // initialize the index(es) for the multiple files
+        while Path::new(db_file_filename.as_str()).exists() {
+            files.push(db_file_filename.clone());
+            let mut bytes: u64 = 0;
+            let mut file_index: HashMap<String, u64> = HashMap::new();
+
+            let mut log_file_lines = String::new();
+            let mut log_file = OpenOptions::new()
+                .read(true)
+                .open(Path::new(db_file_filename.as_str()))
+                .expect("Expected file open.");
+
+            log_file
+                .read_to_string(&mut log_file_lines)
+                .expect("error reading file");
+
+            log_file_lines.lines().for_each(|line| {
+                let parsed_line: Vec<&str> = line.split(",").collect();
+                match parsed_line.as_slice() {
+                    [fkey, _] => {
+                        file_index.insert(String::from(*fkey), bytes);
+                        bytes += (line.len() as u64) + 1;
+                    }
+                    _ => {
+                        ();
+                    }
+                }
+            });
+
+            index.push(file_index);
+
+            ctr += 1;
+            db_file_filename = format!("{db_dir}/db{ctr}.log");
+        }
 
         return NaiveWithHashIndexEngine {
             config,
             index,
-            files: Vec::new(),
+            files,
         };
     }
 }
@@ -172,13 +211,17 @@ impl NaiveWithHashIndexEngine {
 impl Engine for NaiveWithHashIndexEngine {
     fn db_read(&self, key: String) -> Result<Option<String>, ()> {
         // reverse since we push newer files/hashmaps to the end of the Vec
-        for ind in self.index.iter().rev() {
+        for (i, ind) in self.index.iter().rev().enumerate() {
+            println!("{:?}, {}", ind, i);
             match ind.get(&key) {
                 Some(&byte_offset) => {
                     let db_dir = &self.config.db_directory;
                     let default_filename = format!("{db_dir}/db0.log");
-                    let log_file_path = self.files.last().unwrap_or(&default_filename); // just fetch the most recent file
-
+                    // get the file for the corresponding index
+                    let log_file_path = self
+                        .files
+                        .get(self.files.len() - i - 1)
+                        .unwrap_or(&default_filename);
                     // TODO: refactor this stuff
                     let mut log_file_str_buf: String = String::new();
                     let mut log_file = OpenOptions::new()
@@ -187,14 +230,12 @@ impl Engine for NaiveWithHashIndexEngine {
                         .read(true)
                         .open(Path::new(log_file_path.as_str()))
                         .expect("Expected file open.");
-
-                    log_file.seek(SeekFrom::Start(byte_offset));
+                    log_file.seek(SeekFrom::Start(byte_offset)).unwrap();
                     log_file
                         .read_to_string(&mut log_file_str_buf)
                         .expect("To be able to read from file");
 
                     let found_line = log_file_str_buf.lines().next().unwrap(); // TODO: actually match this
-                    info!("Parsing line: {}", found_line);
                     let mut line_tokens = found_line.split(",");
 
                     // if somehow the key doesn't match, raise an Error
@@ -237,7 +278,6 @@ impl Engine for NaiveWithHashIndexEngine {
             let new_file_size = new_log_file.metadata().unwrap().len();
             self.files.push(new_filename);
             let mut new_index = HashMap::new();
-
             let _ = new_log_file.write(new_entry.as_bytes());
             new_index.insert(key, new_file_size);
             self.index.push(new_index);
