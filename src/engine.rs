@@ -1,19 +1,12 @@
 use std::collections::HashMap;
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::prelude::FileExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use log::info;
 // Engine represents the storage engine for our dumb DB.
 // This is the thing that handles actual reads and writes to disk
 
-const MAX_LOG_FILE_SIZE: u64 = 24;
-
-enum EngineFileOrientation {
-    Log,
-    Page,
-}
+const MAX_LOG_FILE_SIZE: u64 = 160000000; // 160mb
 
 // Trait represents the general functionality of a dumbdb Storage Engine
 pub trait Engine {
@@ -26,28 +19,22 @@ pub trait Engine {
 // shared config between Engine implementations
 pub struct EngineConfig {
     db_directory: String,
-    // files: Option<Vec<File>>,
-    file: Option<File>, // TODO: eventually allow for multiple files?
-    orientation: EngineFileOrientation, // TODO: do we actually need this?
 }
 
 impl EngineConfig {
     pub fn get_standard_config() -> EngineConfig {
         return EngineConfig {
             db_directory: String::from("./dumbdb/data"),
-            orientation: EngineFileOrientation::Log,
-            // files: None,
-            file: None,
         };
     }
 }
 
-pub struct NaiveEngine {
+pub struct AppendOnlyLogEngine {
     config: EngineConfig,
     files: Vec<String>,
 }
 
-impl Engine for NaiveEngine {
+impl Engine for AppendOnlyLogEngine {
     fn db_read(&self, key: String) -> Result<Option<String>, ()> {
         // open directory/DB file, scan through the file in reverse order, search for key
 
@@ -132,27 +119,27 @@ impl Engine for NaiveEngine {
     }
 }
 
-impl NaiveEngine {
-    pub fn new() -> NaiveEngine {
+impl AppendOnlyLogEngine {
+    pub fn new() -> AppendOnlyLogEngine {
         let config = EngineConfig::get_standard_config();
         // TODO: make this write to a proper directory at some point
         let path = Path::new(config.db_directory.as_str());
         create_dir_all(path).expect("Unable to create data directory for dumbdb");
 
-        return NaiveEngine {
+        return AppendOnlyLogEngine {
             config,
             files: Vec::new(),
         };
     }
 }
-pub struct NaiveWithHashIndexEngine {
+pub struct AppendOnlyLogWithHashIndexEngine {
     config: EngineConfig,
     index: Vec<HashMap<String, u64>>, // stores the byte offset of keys in the underlying db file
     files: Vec<String>,
 }
 
-impl NaiveWithHashIndexEngine {
-    pub fn new() -> NaiveWithHashIndexEngine {
+impl AppendOnlyLogWithHashIndexEngine {
+    pub fn new() -> AppendOnlyLogWithHashIndexEngine {
         let config = EngineConfig::get_standard_config();
         // TODO: make this write to a proper directory at some point
         let db_dir = config.db_directory.clone();
@@ -200,7 +187,7 @@ impl NaiveWithHashIndexEngine {
             db_file_filename = format!("{db_dir}/db{ctr}.log");
         }
 
-        return NaiveWithHashIndexEngine {
+        return AppendOnlyLogWithHashIndexEngine {
             config,
             index,
             files,
@@ -208,7 +195,7 @@ impl NaiveWithHashIndexEngine {
     }
 }
 
-impl Engine for NaiveWithHashIndexEngine {
+impl Engine for AppendOnlyLogWithHashIndexEngine {
     fn db_read(&self, key: String) -> Result<Option<String>, ()> {
         // reverse since we push newer files/hashmaps to the end of the Vec
         for (i, ind) in self.index.iter().rev().enumerate() {
@@ -306,8 +293,8 @@ impl Engine for NaiveWithHashIndexEngine {
 
 pub fn create_engine_from_string(engine_type: String) -> Option<Box<dyn Engine>> {
     match engine_type.to_ascii_lowercase().as_str() {
-        "naive" => Some(Box::new(NaiveEngine::new())),
-        "naive_index" => Some(Box::new(NaiveWithHashIndexEngine::new())),
+        "aol" => Some(Box::new(AppendOnlyLogEngine::new())),
+        "aol_index" => Some(Box::new(AppendOnlyLogWithHashIndexEngine::new())),
         _ => None,
     }
 }
