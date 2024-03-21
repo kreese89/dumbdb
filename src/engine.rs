@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{create_dir_all, File, OpenOptions};
+use std::fs::{create_dir_all, remove_dir_all, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -8,6 +8,7 @@ use std::path::Path;
 
 // const MAX_LOG_FILE_SIZE: u64 = 160000000; // 160mb
 const MAX_LOG_FILE_SIZE: u64 = 20;
+const FILE_LIMIT: usize = 2;
 
 // Trait represents the general functionality of a dumbdb Storage Engine
 pub trait Engine {
@@ -38,7 +39,7 @@ pub struct AppendOnlyLogEngine {
 impl Engine for AppendOnlyLogEngine {
     fn db_read(&self, key: String) -> Result<Option<String>, ()> {
         // open directory/DB file, scan through the file in reverse order, search for key
-        for (i, filename) in self.files.iter().enumerate() {
+        for filename in self.files.iter().rev() {
             let mut log_file_lines = String::new();
             let mut log_file = OpenOptions::new()
                 .write(true) // needed to be able to create the file if it doesn't exist
@@ -104,11 +105,15 @@ impl Engine for AppendOnlyLogEngine {
 
             self.files.push(new_filename);
             let _ = new_log_file.write(new_entry.as_bytes());
+
+            if files_ct >= FILE_LIMIT {
+                let _ = self.compactify();
+            }
         } else {
             let _ = log_file.write(new_entry.as_bytes());
         }
 
-        return Ok(None);
+        Ok(None)
     }
 
     fn shutdown(&self) -> Result<Option<String>, ()> {
@@ -142,6 +147,85 @@ impl AppendOnlyLogEngine {
             config,
             files: files,
         };
+    }
+
+    pub fn compactify(&mut self) -> Result<(), ()> {
+        // go through and clear old files, removing old keys as needed
+
+        // how we'll do this: go through our files newest first
+        // reach each file in reverse
+        // keep hash map of the keys we've seen and their vals
+        // if we see a new key, add it to the hash map
+
+        // do this over all files
+        // at the end we have a unique set of key,val pairs
+        // write them to files, creating+writing new files if need be
+
+        // TODO: figure out best way to preserve order of entries
+        // look into IndexMap, BTreeMap
+
+        // go through existing files, fetch each (key, val) pair
+        let mut entries: HashMap<String, String> = HashMap::new();
+
+        for filename in self.files.iter().rev() {
+            let mut log_file_lines = String::new();
+            let mut log_file = OpenOptions::new()
+                .write(true) // needed to be able to create the file if it doesn't exist
+                .create(true)
+                .read(true)
+                .open(Path::new(filename.as_str()))
+                .expect("Expected file open.");
+
+            log_file
+                .read_to_string(&mut log_file_lines)
+                .expect("error reading file");
+
+            for line in log_file_lines.lines().rev() {
+                let mut tokens = line.split(",");
+                let key = String::from(tokens.next().unwrap());
+                if !entries.contains_key(&key) {
+                    let val = String::from(tokens.next().unwrap());
+                    entries.insert(key, val);
+                }
+            }
+        }
+        // clear existing files
+        let db_dir = &self.config.db_directory;
+        remove_dir_all(&db_dir).unwrap();
+        create_dir_all(&db_dir).unwrap();
+        self.files.clear();
+
+        let mut ctr = 0;
+        let mut db_file_filename = format!("{db_dir}/db{ctr}.log");
+        let mut log_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&db_file_filename)
+            .expect("Expected file to open.");
+        self.files.push(db_file_filename);
+
+        let mut curr_file_size: usize = 0;
+
+        for (key, val) in entries.iter() {
+            let new_entry = format!("{key},{val}\n");
+            if curr_file_size > MAX_LOG_FILE_SIZE.try_into().unwrap() {
+                // TODO: refactor since this is ugly
+                ctr += 1;
+                db_file_filename = format!("{db_dir}/db{ctr}.log");
+
+                log_file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&db_file_filename)
+                    .expect("Expected file to open.");
+                self.files.push(db_file_filename);
+
+                curr_file_size = 0;
+            }
+            log_file.write(new_entry.as_bytes()).unwrap();
+            curr_file_size += new_entry.as_bytes().len();
+        }
+        Ok(())
     }
 }
 pub struct AppendOnlyLogWithHashIndexEngine {
